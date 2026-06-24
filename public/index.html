@@ -710,6 +710,19 @@
       <div class="section-label" style="margin-top:16px;">Pick an Avatar</div>
       <div class="avatar-grid" id="avatar-grid"></div>
 
+      <div class="section-label" style="margin-top:16px;">Max Players (when creating)</div>
+      <div class="input-group">
+        <select class="input" id="max-players-select">
+          <option value="2">2 players</option>
+          <option value="3">3 players</option>
+          <option value="4" selected>4 players</option>
+          <option value="5">5 players</option>
+          <option value="6">6 players</option>
+          <option value="7">7 players</option>
+          <option value="8">8 players</option>
+        </select>
+      </div>
+
       <div class="home-buttons">
         <button class="btn btn-primary" onclick="App.createRoom()">🏠 Create Room</button>
         <button class="btn btn-ghost" onclick="App.toggleJoinPanel()">🚪 Join Room</button>
@@ -1265,7 +1278,8 @@ const App = {
   // ── HOME ──────────────────────────────────
   createRoom() {
     this.username = this.getUsername();
-    socket.emit('room:create', { username: this.username, avatar: this.avatar });
+    const maxPlayers = parseInt(document.getElementById('max-players-select').value, 10) || 8;
+    socket.emit('room:create', { username: this.username, avatar: this.avatar, maxPlayers });
   },
 
   joinRoom() {
@@ -1286,7 +1300,7 @@ const App = {
     if (!room) return;
     document.getElementById('lobby-room-code').textContent = room.code;
     const badge = document.getElementById('room-visibility-badge');
-    badge.innerHTML = `<span style="background:rgba(99,102,241,0.2);color:var(--primary);font-size:0.75rem;font-weight:600;padding:3px 10px;border-radius:20px;border:1px solid var(--primary);">👥 ${room.players.length}/8 players</span>`;
+    badge.innerHTML = `<span style="background:rgba(99,102,241,0.2);color:var(--primary);font-size:0.75rem;font-weight:600;padding:3px 10px;border-radius:20px;border:1px solid var(--primary);">👥 ${room.players.length}/${room.maxPlayers} players</span>`;
 
     const grid = document.getElementById('player-grid');
     grid.innerHTML = room.players.map(p => `
@@ -1617,4 +1631,3 @@ socket.on('connect_error', () => {
 </script>
 </body>
 </html>
-
