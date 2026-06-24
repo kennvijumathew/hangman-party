@@ -24,7 +24,7 @@ app.get('/', (req, res) => {
 // =============================================
 const rooms = {}; // roomCode -> room object
 
-function makeRoom(code, hostId) {
+function makeRoom(code, hostId, maxPlayers) {
   return {
     code,
     hostId,
@@ -36,6 +36,7 @@ function makeRoom(code, hostId) {
     incorrectGuesses: 0,
     guessedLetters: [],
     maxIncorrect: 6,
+    maxPlayers,         // chosen by host at creation, 2-8
   };
 }
 
@@ -62,6 +63,7 @@ function sanitizeRoom(room) {
     incorrectGuesses: room.incorrectGuesses,
     guessedLetters: room.guessedLetters,
     maxIncorrect: room.maxIncorrect,
+    maxPlayers: room.maxPlayers,
     wordLength: room.word.length,
     players: room.players.map(p => ({
       id: p.id,
@@ -84,16 +86,17 @@ io.on('connection', (socket) => {
   console.log('+ connect', socket.id);
 
   // ── CREATE ROOM ──────────────────────────
-  socket.on('room:create', ({ username, avatar }) => {
+  socket.on('room:create', ({ username, avatar, maxPlayers }) => {
     const code = Math.random().toString(36).substr(2, 6).toUpperCase();
-    const room = makeRoom(code, socket.id);
+    const clampedMax = Math.min(8, Math.max(2, parseInt(maxPlayers, 10) || 8));
+    const room = makeRoom(code, socket.id, clampedMax);
     rooms[code] = room;
 
     room.players.push({ id: socket.id, username, avatar, ready: true, correct: 0, wrong: 0, total: 0 });
     socket.join(code);
     socket.emit('room:joined', { code, isHost: true });
     broadcastRoom(room);
-    console.log(`Room ${code} created by ${username}`);
+    console.log(`Room ${code} created by ${username} (max ${clampedMax} players)`);
   });
 
   // ── JOIN ROOM ─────────────────────────────
@@ -101,7 +104,7 @@ io.on('connection', (socket) => {
     const room = rooms[code];
     if (!room) { socket.emit('error', 'Room not found'); return; }
     if (room.phase !== 'lobby') { socket.emit('error', 'Game already in progress'); return; }
-    if (room.players.length >= 8) { socket.emit('error', 'Room is full'); return; }
+    if (room.players.length >= room.maxPlayers) { socket.emit('error', `Room is full (max ${room.maxPlayers} players)`); return; }
 
     room.players.push({ id: socket.id, username, avatar, ready: false, correct: 0, wrong: 0, total: 0 });
     socket.join(code);
