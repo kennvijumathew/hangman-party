@@ -37,7 +37,18 @@ function makeRoom(code, hostId, maxPlayers) {
     guessedLetters: [],
     maxIncorrect: 6,
     maxPlayers,         // chosen by host at creation, 2-8
+    setterId: null,     // id of the player whose turn it is to set the word
   };
+}
+
+// Figures out who sets the word next, rotating through the current
+// player list in order. Falls back to the first player if the previous
+// setter is no longer in the room.
+function nextSetterId(room) {
+  if (!room.players.length) return null;
+  const idx = room.players.findIndex(p => p.id === room.setterId);
+  if (idx === -1) return room.players[0].id;
+  return room.players[(idx + 1) % room.players.length].id;
 }
 
 function getRoomByPlayer(socketId) {
@@ -64,6 +75,7 @@ function sanitizeRoom(room) {
     guessedLetters: room.guessedLetters,
     maxIncorrect: room.maxIncorrect,
     maxPlayers: room.maxPlayers,
+    setterId: room.setterId,
     wordLength: room.word.length,
     players: room.players.map(p => ({
       id: p.id,
@@ -133,13 +145,14 @@ io.on('connection', (socket) => {
     if (!room.players.every(p => p.ready)) { socket.emit('error', 'Not all players are ready'); return; }
 
     room.phase = 'word-entry';
+    room.setterId = room.hostId; // host sets the word first; rotates after each round
     broadcastRoom(room);
   });
 
-  // ── SUBMIT WORD (host) ────────────────────
+  // ── SUBMIT WORD (current setter) ──────────
   socket.on('game:word', ({ word, hint }) => {
     const room = getRoomByPlayer(socket.id);
-    if (!room || room.hostId !== socket.id) return;
+    if (!room || room.setterId !== socket.id) return;
     const clean = word.toUpperCase().replace(/[^A-Z]/g, '');
     if (clean.length < 2) { socket.emit('error', 'Word must be at least 2 letters'); return; }
 
@@ -151,9 +164,10 @@ io.on('connection', (socket) => {
     room.players.forEach(p => { p.correct = 0; p.wrong = 0; p.total = 0; });
     room.phase = 'game';
 
+    const setter = getPlayer(room, room.setterId);
     broadcastRoom(room);
     io.to(room.code).emit('chat:message', {
-      avatar: '🎮', username: 'Game', text: `Game started! Guess the ${clean.length}-letter word!`, time: now()
+      avatar: '🎮', username: 'Game', text: `${setter?.username || 'Someone'} set a ${clean.length}-letter word! Guess away!`, time: now()
     });
   });
 
@@ -161,6 +175,7 @@ io.on('connection', (socket) => {
   socket.on('game:guess', ({ letter }) => {
     const room = getRoomByPlayer(socket.id);
     if (!room || room.phase !== 'game') return;
+    if (room.setterId === socket.id) { socket.emit('error', "You set the word this round — sit back and watch!"); return; }
     const player = getPlayer(room, socket.id);
     if (!player) return;
 
@@ -220,6 +235,7 @@ io.on('connection', (socket) => {
     const room = getRoomByPlayer(socket.id);
     if (!room || room.hostId !== socket.id) return;
     room.phase = 'word-entry';
+    room.setterId = nextSetterId(room); // pass the word-setting turn to the next player
     room.word = '';
     room.hint = '';
     room.revealedWord = [];
@@ -275,6 +291,15 @@ io.on('connection', (socket) => {
     io.to(room.code).emit('chat:message', {
       avatar: '🎮', username: 'Game', text: `${username} left the room`, time: now()
     });
+
+    // If the current word-setter just left before submitting a word,
+    // pass the turn along so the round isn't stuck waiting on them
+    if (room.phase === 'word-entry' && room.setterId === socket.id) {
+      room.setterId = room.players.length ? room.players[0].id : null;
+      io.to(room.code).emit('chat:message', {
+        avatar: '🎮', username: 'Game', text: `${username} left before setting a word — passing the turn along`, time: now()
+      });
+    }
 
     // If game in progress and only 1 player left, end game
     if (room.phase === 'game' && room.players.length < 2) {
