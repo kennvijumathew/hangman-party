@@ -805,7 +805,7 @@
     <div class="word-entry-card">
       <div class="card waiting-card">
         <div class="spinner"></div>
-        <div class="waiting-title">🧠 Host is choosing a word...</div>
+        <div class="waiting-title" id="waiting-title">🧠 Someone is choosing a word...</div>
         <p style="color:var(--text-muted);font-size:0.9rem;">Get ready to start guessing!</p>
         <div class="pulsing-dots">
           <div class="dot"></div>
@@ -862,6 +862,7 @@
 
     <!-- CENTER: Word + Keyboard -->
     <div class="game-center">
+      <div id="setter-badge" style="text-align:center;font-size:0.85rem;color:var(--text-muted);margin-bottom:8px;"></div>
       <div class="hint-card" id="hint-card">
         <span style="font-size:1.2rem;">💡</span>
         <span class="hint-label">Hint:</span>
@@ -876,6 +877,7 @@
         <div class="progress-label"><span id="progress-text">0 of 0 letters found</span><span id="progress-pct">0%</span></div>
       </div>
 
+      <div id="setter-spectator-note" style="display:none;text-align:center;color:var(--warning);font-size:0.9rem;margin:8px 0;">👀 You set this word — sit back and watch everyone guess!</div>
       <div class="keyboard" id="keyboard"></div>
     </div>
 
@@ -1254,6 +1256,7 @@ const App = {
   myId: null,
   roomCode: '',
   isHost: false,
+  isSetter: false,
   room: null,        // last room:update payload from server
   lastPhase: null,
 
@@ -1353,10 +1356,13 @@ const App = {
     const room = this.room;
     const container = document.getElementById('waiting-players');
     if (!room || !container) return;
+    const setter = room.players.find(p => p.id === room.setterId);
+    const titleEl = document.getElementById('waiting-title');
+    if (titleEl) titleEl.textContent = setter ? `🧠 ${setter.username} is choosing a word...` : '🧠 Choosing a word...';
     container.innerHTML = `
       <div class="panel-title" style="text-align:center;margin-bottom:8px;">Players in room</div>
       <div style="display:flex;justify-content:center;gap:10px;flex-wrap:wrap;font-size:1.4rem;">
-        ${room.players.map(p => `<span title="${escapeHtml(p.username)}">${p.avatar}</span>`).join('')}
+        ${room.players.map(p => `<span title="${escapeHtml(p.username)}" style="${p.id === room.setterId ? 'filter:drop-shadow(0 0 6px var(--primary));' : ''}">${p.avatar}</span>`).join('')}
       </div>
     `;
   },
@@ -1382,9 +1388,22 @@ const App = {
     renderLeaderboard(room.players);
     document.getElementById('game-chat-messages').innerHTML = '';
     this.goto('game');
-    addChatMessage('game', '🎮', 'Game', 'Round started! Guess the word!');
+    this.renderSetterUI(room);
+    const setter = room.players.find(p => p.id === room.setterId);
+    addChatMessage('game', '🎮', 'Game', `Round started! ${setter ? setter.username + ' set the word — ' : ''}Guess away!`);
     showToast('Game started! Good luck!', 'success');
     this._setupKeyboard();
+  },
+
+  renderSetterUI(room) {
+    const setter = room.players.find(p => p.id === room.setterId);
+    const badge = document.getElementById('setter-badge');
+    const note = document.getElementById('setter-spectator-note');
+    if (badge) badge.textContent = setter ? `🖋️ Word set by ${setter.username}` : '';
+    if (note) note.style.display = this.isSetter ? 'block' : 'none';
+    document.querySelectorAll('.key').forEach(btn => {
+      if (this.isSetter) btn.disabled = true;
+    });
   },
 
   renderGameState(room) {
@@ -1393,13 +1412,14 @@ const App = {
     updateHangman(room.incorrectGuesses);
     syncKeyboard(room.revealedWord, room.guessedLetters);
     renderLeaderboard(room.players);
+    this.renderSetterUI(room);
   },
 
   _kbHandler: null,
   _setupKeyboard() {
     if (this._kbHandler) document.removeEventListener('keydown', this._kbHandler);
     this._kbHandler = (e) => {
-      if (this.screen !== 'game' || !this.room || this.room.phase !== 'game') return;
+      if (this.screen !== 'game' || !this.room || this.room.phase !== 'game' || this.isSetter) return;
       const activeEl = document.activeElement;
       if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) return;
       const letter = e.key.toUpperCase();
@@ -1410,6 +1430,7 @@ const App = {
 
   processGuess(letter) {
     if (!this.room || this.room.phase !== 'game') return;
+    if (this.isSetter) { showToast("You set the word this round — sit back and watch!", 'warning'); return; }
     letter = letter.toUpperCase();
     if (this.room.guessedLetters.includes(letter)) { showToast(`Already guessed "${letter}"`, 'warning'); return; }
     socket.emit('game:guess', { letter });
@@ -1475,6 +1496,7 @@ const App = {
   handleRoomUpdate(room) {
     this.room = room;
     this.isHost = room.hostId === this.myId;
+    this.isSetter = room.setterId === this.myId;
     const enteringPhase = room.phase !== this.lastPhase;
 
     switch (room.phase) {
@@ -1485,8 +1507,8 @@ const App = {
       case 'word-entry':
         if (enteringPhase) {
           this.goto('word-entry');
-          document.getElementById('word-entry-host').style.display = this.isHost ? 'flex' : 'none';
-          document.getElementById('word-entry-waiting').style.display = this.isHost ? 'none' : 'flex';
+          document.getElementById('word-entry-host').style.display = this.isSetter ? 'flex' : 'none';
+          document.getElementById('word-entry-waiting').style.display = this.isSetter ? 'none' : 'flex';
           document.getElementById('secret-word-input').value = '';
           document.getElementById('hint-input').value = '';
           document.getElementById('word-char-count').textContent = '0/20';
